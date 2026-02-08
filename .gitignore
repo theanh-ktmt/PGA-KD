@@ -1,0 +1,13 @@
+*.jpg
+*.mp4
+*.jpeg
+__pycache__
+.venv
+vlm
+training/
+logs/
+wandb/
+*.log
+eval_outputs/
+eval_images/
+models/
