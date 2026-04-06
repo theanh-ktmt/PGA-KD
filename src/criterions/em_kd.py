@@ -36,8 +36,13 @@ class EMKDLoss(nn.Module):
         
         teacher_qry_input = input_data['teacher_inputs']['qry']
         teacher_pos_input = input_data['teacher_inputs']['pos']
+        # Original Teacher counts
         num_text_qry_tokens = ((teacher_qry_input['input_ids'] < 151643) | (teacher_qry_input['input_ids'] > 151656)).sum(dim=1)
         num_text_pos_tokens = ((teacher_pos_input['input_ids'] < 151643) | (teacher_pos_input['input_ids'] > 151656)).sum(dim=1)
+        
+        # ADD THIS: Student counts (Assuming the student uses the same tokenizer/image IDs)
+        num_text_qry_tokens_stu = ((student_qry_input['input_ids'] < 151643) | (student_qry_input['input_ids'] > 151656)).sum(dim=1)
+        num_text_pos_tokens_stu = ((student_pos_input['input_ids'] < 151643) | (student_pos_input['input_ids'] > 151656)).sum(dim=1)
         
         batch_size = student_qry_input['input_ids'].size(0)
         with torch.no_grad():
@@ -82,10 +87,14 @@ class EMKDLoss(nn.Module):
                         num_tokens_vision_qry_tea = teacher_qry_image_features[cur_idx_qry_img].size(0)
                         # print(f"Sample qry {i}: num_tokens_vision_qry_stu {num_tokens_vision_qry_stu}, num_tokens_vision_qry_tea {num_tokens_vision_qry_tea}")
                         num_text_token_qry_tea = num_text_qry_tokens[i]
-                        student_qry_vision_hidden_state = student_qry_hidden_states[-1][i][:num_tokens_vision_qry_stu, :]
+                        # ADD THIS:
+                        num_text_token_qry_stu = num_text_qry_tokens_stu[i]
+                        
+                        # UPDATE STUDENT SLICING TO MATCH TEACHER:
+                        student_qry_vision_hidden_state = student_qry_hidden_states[-1][i][-(num_tokens_vision_qry_stu + num_text_token_qry_stu):-(num_text_token_qry_stu), :]
                         teacher_qry_vision_hidden_state = teacher_qry_hidden_states[-1][i][-(num_tokens_vision_qry_tea + num_text_token_qry_tea):-(num_text_token_qry_tea), :]
                         
-                        student_qry_text_hidden_state = student_qry_hidden_states[-1][i][num_tokens_vision_qry_stu:(num_tokens_vision_qry_stu + num_text_qry_tokens[i]), :]
+                        student_qry_text_hidden_state = student_qry_hidden_states[-1][i][-num_text_token_qry_stu:, :]
                         teacher_qry_text_hidden_state = teacher_qry_hidden_states[-1][i][-num_text_token_qry_tea:, :]
                         # print(f"Sample qry {i}: student_qry_vision_hidden_state shape {student_qry_vision_hidden_state.shape}, teacher_qry_vision_hidden_state shape {teacher_qry_vision_hidden_state.shape}, student_qry_text_hidden_state shape {student_qry_text_hidden_state.shape}, teacher_qry_text_hidden_state shape {teacher_qry_text_hidden_state.shape}")
                         # print(f"Sample qry {i}: student_qry_hidden_state shape {student_qry_hidden_states[-1][i].shape}, teacher_qry_hidden_state shape {teacher_qry_hidden_states[-1][i].shape}")
@@ -101,18 +110,26 @@ class EMKDLoss(nn.Module):
                         idx_t = torch.tensor(idx_t, dtype=torch.long, device=vl_t.device)
                         idx_s = torch.tensor(idx_s, dtype=torch.long, device=vl_s.device)
                         
-                        vl_s_matched = vl_s[idx_s]
-                        vl_t_matched = vl_t[idx_t]
-                        loss_vsd += nn.MSELoss()(vl_s_matched, vl_t_matched)
-                        
-                        vhs_s_matched = student_qry_vision_hidden_state[idx_s]
-                        vhs_t_matched = teacher_qry_vision_hidden_state[idx_t]
-                        
-                        affinity_s = F.cosine_similarity(vhs_s_matched.unsqueeze(1), student_qry_text_hidden_state.unsqueeze(0), dim=-1)
-                        affinity_t = F.cosine_similarity(vhs_t_matched.unsqueeze(1), teacher_qry_text_hidden_state.unsqueeze(0), dim=-1)
-                        # print(f"Sample qry {i}: affinity_s shape {affinity_s.shape}, affinity_t shape {affinity_t.shape}")
-                        
-                        loss_vlad += F.smooth_l1_loss(affinity_s, affinity_t)
+                        # SAFEGUARD 1: Ensure we actually matched vision tokens
+                        if len(idx_s) > 0:
+                            vl_s_matched = vl_s[idx_s]
+                            vl_t_matched = vl_t[idx_t]
+                            loss_vsd += nn.MSELoss()(vl_s_matched, vl_t_matched)
+                            
+                            vhs_s_matched = student_qry_vision_hidden_state[idx_s]
+                            vhs_t_matched = teacher_qry_vision_hidden_state[idx_t]
+                            
+                            min_text_len_qry = min(student_qry_text_hidden_state.size(0), teacher_qry_text_hidden_state.size(0))
+                            
+                            # SAFEGUARD 2: Ensure there are actually text tokens before computing VLAD
+                            if min_text_len_qry > 0:
+                                student_qry_text_hidden_state = student_qry_text_hidden_state[-min_text_len_qry:, :]
+                                teacher_qry_text_hidden_state = teacher_qry_text_hidden_state[-min_text_len_qry:, :]
+                                
+                                affinity_s = F.cosine_similarity(vhs_s_matched.unsqueeze(1), student_qry_text_hidden_state.unsqueeze(0), dim=-1)
+                                affinity_t = F.cosine_similarity(vhs_t_matched.unsqueeze(1), teacher_qry_text_hidden_state.unsqueeze(0), dim=-1)
+                                
+                                loss_vlad += F.smooth_l1_loss(affinity_s, affinity_t)
                         cur_idx_qry_img += 1
                         
             if student_pos_image_features is not None and teacher_pos_image_features is not None:
@@ -122,10 +139,11 @@ class EMKDLoss(nn.Module):
                         num_tokens_vision_pos_tea = teacher_pos_image_features[cur_idx_pos_img].size(0)
                         # print(f"Sample pos {i}: num_tokens_vision_pos_stu {num_tokens_vision_pos_stu}, num_tokens_vision_pos_tea {num_tokens_vision_pos_tea}")
                         num_text_token_pos_tea = num_text_pos_tokens[i]
-                        student_pos_vision_hidden_state = student_pos_hidden_states[-1][i][:num_tokens_vision_pos_stu, :]
+                        num_text_token_pos_stu = num_text_pos_tokens_stu[i]
+                        student_pos_vision_hidden_state = student_pos_hidden_states[-1][i][-(num_tokens_vision_pos_stu + num_text_token_pos_stu):-(num_text_token_pos_stu), :]
                         teacher_pos_vision_hidden_state = teacher_pos_hidden_states[-1][i][-(num_tokens_vision_pos_tea + num_text_token_pos_tea):-(num_text_token_pos_tea), :]
                         
-                        student_pos_text_hidden_state = student_pos_hidden_states[-1][i][num_tokens_vision_pos_stu:(num_tokens_vision_pos_stu + num_text_pos_tokens[i]), :]
+                        student_pos_text_hidden_state = student_pos_hidden_states[-1][i][-num_text_token_pos_stu:, :]
                         teacher_pos_text_hidden_state = teacher_pos_hidden_states[-1][i][-num_text_token_pos_tea:, :]
                         # print(f"Sample pos {i}: student_pos_vision_hidden_state shape {student_pos_vision_hidden_state.shape}, teacher_pos_vision_hidden_state shape {teacher_pos_vision_hidden_state.shape}, student_pos_text_hidden_state shape {student_pos_text_hidden_state.shape}, teacher_pos_text_hidden_state shape {teacher_pos_text_hidden_state.shape}")
                         # print(f"Sample pos {i}: student_pos_hidden_state shape {student_pos_hidden_states[-1][i].shape}, teacher_pos_hidden_state shape {teacher_pos_hidden_states[-1][i].shape}")
@@ -141,18 +159,27 @@ class EMKDLoss(nn.Module):
                         idx_t = torch.tensor(idx_t, dtype=torch.long, device=vp_t.device)
                         idx_s = torch.tensor(idx_s, dtype=torch.long, device=vp_s.device)
                         
-                        vp_s_matched = vp_s[idx_s]
-                        vp_t_matched = vp_t[idx_t]
-                        
-                        loss_vsd += nn.MSELoss()(vp_s_matched, vp_t_matched)
-                        
-                        vhs_s_matched = student_pos_vision_hidden_state[idx_s]
-                        vhs_t_matched = teacher_pos_vision_hidden_state[idx_t]
-                        
-                        affinity_s = F.cosine_similarity(vhs_s_matched.unsqueeze(1), student_pos_text_hidden_state.unsqueeze(0), dim=-1)
-                        affinity_t = F.cosine_similarity(vhs_t_matched.unsqueeze(1), teacher_pos_text_hidden_state.unsqueeze(0), dim=-1)
-                        # print(f"Sample pos {i}: affinity_s shape {affinity_s.shape}, affinity_t shape {affinity_t.shape}")
-                        loss_vlad += F.smooth_l1_loss(affinity_s, affinity_t)
+                        # SAFEGUARD 1: Ensure we actually matched vision tokens
+                        if len(idx_s) > 0:
+                            vp_s_matched = vp_s[idx_s]
+                            vp_t_matched = vp_t[idx_t]
+                            
+                            loss_vsd += nn.MSELoss()(vp_s_matched, vp_t_matched)
+                            
+                            vhs_s_matched = student_pos_vision_hidden_state[idx_s]
+                            vhs_t_matched = teacher_pos_vision_hidden_state[idx_t]
+                            
+                            min_text_len_pos = min(student_pos_text_hidden_state.size(0), teacher_pos_text_hidden_state.size(0))
+                            
+                            # SAFEGUARD 2: Ensure there are actually text tokens before computing VLAD
+                            if min_text_len_pos > 0:
+                                student_pos_text_hidden_state = student_pos_text_hidden_state[-min_text_len_pos:, :]
+                                teacher_pos_text_hidden_state = teacher_pos_text_hidden_state[-min_text_len_pos:, :]
+                                
+                                affinity_s = F.cosine_similarity(vhs_s_matched.unsqueeze(1), student_pos_text_hidden_state.unsqueeze(0), dim=-1)
+                                affinity_t = F.cosine_similarity(vhs_t_matched.unsqueeze(1), teacher_pos_text_hidden_state.unsqueeze(0), dim=-1)
+                                
+                                loss_vlad += F.smooth_l1_loss(affinity_s, affinity_t)
                         cur_idx_pos_img += 1
                         
         loss_distill = (0.25 * loss_vsd + 25 * loss_vlad) / batch_size

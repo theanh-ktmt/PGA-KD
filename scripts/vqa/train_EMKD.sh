@@ -3,15 +3,15 @@
 # GPU per node
 NUM_GPUS_PER_NODE=8
 LORA_R=64
-BATCH_SIZE=32
+BATCH_SIZE=16
 
 # Configs
 TRAIN_SCRIPT="main.py"
-EXP_NAME="EMKD_full_vqa_r${LORA_R}_bs${BATCH_SIZE}"
+EXP_NAME="EMKD_full_retrieval_r${LORA_R}_bs${BATCH_SIZE}"
 USE_FULLSET=true
 
 if [ "$USE_FULLSET" = true ]; then
-    SUBSETS=("OK-VQA" "A-OKVQA" "DocVQA" "InfographicsVQA" "ChartQA" "Visual7W")
+    SUBSETS=("VisDial" "CIRR" "VisualNews_t2i" "VisualNews_i2t" "MSCOCO_t2i" "MSCOCO_i2t" "NIGHTS" "WebQA")
     echo "Running with FULL dataset set."
 else
     SUBSETS=("DocVQA")
@@ -56,5 +56,5 @@ torchrun --nproc_per_node=$NUM_GPUS_PER_NODE $TRAIN_SCRIPT \
     --image_resolution "low" \
     --projector_config_path "./config/projector_config.json" \
     --projector_lr 5e-4 \
-    --report_to "wandb" \
+    --report_to "none" \
     --run_name "$EXP_NAME"
