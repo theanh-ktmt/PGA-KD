@@ -3,21 +3,20 @@
 # GPU per node
 NUM_GPUS_PER_NODE=8
 LORA_R=64
-BATCH_SIZE=32
+BATCH_SIZE=16
 
 # Configs
 TRAIN_SCRIPT="main.py"
-EXP_NAME="HOLO_full_cls_r${LORA_R}_bs${BATCH_SIZE}"
+EXP_NAME="HOLO_full_retrieval_r${LORA_R}_bs${BATCH_SIZE}"
 USE_FULLSET=true
 
 if [ "$USE_FULLSET" = true ]; then
-    SUBSETS=("ImageNet_1K" "N24News" "HatefulMemes" "VOC2007" "SUN397")
+    SUBSETS=("VisDial" "CIRR" "VisualNews_t2i" "VisualNews_i2t" "MSCOCO_t2i" "MSCOCO_i2t" "NIGHTS" "WebQA")
     echo "Running with FULL dataset set."
 else
-    SUBSETS=("ImageNet_1K")
-    echo "Running with SINGLE dataset (ImageNet_1K)."
+    SUBSETS=("DocVQA")
+    echo "Running with SINGLE dataset (DocVQA)."
 fi
-
 # =========================================================================
 # Run with torchrun
 # =========================================================================
@@ -26,7 +25,7 @@ torchrun --nproc_per_node=$NUM_GPUS_PER_NODE $TRAIN_SCRIPT \
     --teacher_model_name "raghavlite/B3_Qwen2_2B" \
     --lora True \
     --teacher_lora True \
-    --lora_r ${LORA_R} \
+    --lora_r $LORA_R \
     --teacher_lora_r 8 \
     --teacher_pooling "eos" \
     --teacher_backbone "qwen2_vl" \
@@ -37,7 +36,7 @@ torchrun --nproc_per_node=$NUM_GPUS_PER_NODE $TRAIN_SCRIPT \
     --dataset_split "original" \
     --image_dir "vlm2vec_train/MMEB-train" \
     --output_dir "training/$EXP_NAME" \
-    --per_device_train_batch_size ${BATCH_SIZE} \
+    --per_device_train_batch_size $BATCH_SIZE \
     --gradient_accumulation_steps 1 \
     --learning_rate 1e-4 \
     --num_train_epochs 1 \
@@ -56,5 +55,5 @@ torchrun --nproc_per_node=$NUM_GPUS_PER_NODE $TRAIN_SCRIPT \
     --image_resolution "low" \
     --projector_config_path "./config/projector_config.json" \
     --projector_lr 5e-4 \
-    --report_to "wandb" \
+    --report_to "none" \
     --run_name "$EXP_NAME"

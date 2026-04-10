@@ -6,10 +6,11 @@
 # Example: ./scripts/run_eval.sh training/RKD/checkpoint-final eval_outputs/RKD ImageNet_1K
 # =========================================================================
 # Experiment configurations
-EXP_NAME="HOLO_ImageNet_1K_bs32"
+EXP_NAME="MSE_full_grounding_r16_a32_bs16"
 MODEL_PATH="training/$EXP_NAME/checkpoint-final"
 OUTPUT_DIR=eval_outputs/$EXP_NAME
-SUBSET="ImageNet-1K N24News HatefulMemes VOC2007 SUN397"
+# In-domain + OOD subsets
+SUBSET="MSCOCO Visual7W-Pointing RefCOCO RefCOCO-Matching"
 # Absolute paths
 REPO_ROOT=$(pwd)
 export PYTHONPATH=$REPO_ROOT:$PYTHONPATH
@@ -24,7 +25,7 @@ echo "========================================================="
 # Determine subsets
 if [ "$SUBSET" == "all" ]; then
     # Full list from eval_all.sh
-    SUBSETS=("Wiki-SS-NQ" "VisDial" "CIRR" "VisualNews_t2i" "VisualNews_i2t" "MSCOCO_t2i" "MSCOCO_i2t" "NIGHTS" "WebQA" "OVEN" "FashionIQ" "EDIS" "OK-VQA" "A-OKVQA" "DocVQA" "InfographicsVQA" "ChartQA" "Visual7W" "ScienceQA" "GQA" "TextVQA" "VizWiz" "ImageNet-1K" "HatefulMemes" "SUN397" "N24News" "VOC2007" "Place365" "ImageNet-A" "ImageNet-R" "ObjectNet" "Country211" "MSCOCO" "RefCOCO" "RefCOCO-Matching" "Visual7W-Pointing")
+    SUBSETS=("Wiki-SS-NQ" "VisDial" "CIRR" "VisualNews_t2i" "VisualNews_i2t" "MSCOCO_t2i" "MSCOCO_i2t" "NIGHTS" "WebQA" "OVEN" "FashionIQ" "EDIS" "OK-VQA" "A-OKVQA" "MSCOCO" "InfographicsVQA" "ChartQA" "Visual7W" "ScienceQA" "GQA" "TextVQA" "VizWiz" "ImageNet-1K" "HatefulMemes" "SUN397" "N24News" "VOC2007" "Place365" "ImageNet-A" "ImageNet-R" "ObjectNet" "Country211" "MSCOCO" "RefCOCO" "RefCOCO-Matching" "Visual7W-Pointing")
 else
     # Space separated string to array
     IFS=' ' read -r -a SUBSETS <<< "$SUBSET"
