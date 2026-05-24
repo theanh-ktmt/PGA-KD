@@ -63,6 +63,7 @@ class EMOLoss(nn.Module):
         num_text_qry_tokens = ((teacher_qry_input['input_ids'] < 151652) | (teacher_qry_input['input_ids'] > 151656)).sum(dim=1)
         num_text_pos_tokens = ((teacher_pos_input['input_ids'] < 151652) | (teacher_pos_input['input_ids'] > 151656)).sum(dim=1)
         batch_size = student_qry_input['input_ids'].size(0)
+        
         with torch.no_grad():
             teacher_model.eval()
             teacher_qry_output = teacher_model.encode_input(teacher_qry_input)
@@ -87,19 +88,24 @@ class EMOLoss(nn.Module):
         target = torch.arange(scores.size(0), device=scores.device, dtype=torch.long)
         target = target * (all_student_qry_reps.size(0) // all_student_pos_reps.size(0))
         contrastive_loss = nn.CrossEntropyLoss()(scores / self.distiller.temperature, target)
+        
         topk_token_text_results = self.extract_top_k_text_token(input_data, teacher_qry_attention, teacher_pos_attention, num_text_qry_tokens, num_text_pos_tokens)
+        
         self.ot_loss = self.compute_ot_loss_for_retrieval(
             student_qry_output, student_pos_output,
             teacher_qry_output, teacher_pos_output,
             distiller, input_data, topk_token_text_results
         )
+        
         self.attention_loss = self.compute_attention_loss(
             teacher_qry_attention, teacher_pos_attention,
             student_qry_attention, student_pos_attention,
             input_data, topk_token_text_results,
             k_layer=3
         )
+        
         total_loss = self.kd_loss_weight * contrastive_loss + (1 - self.kd_loss_weight) * (self.ot_loss + self.attention_loss)
+        
         return {
             'loss': total_loss,
             'contrastive_loss': contrastive_loss,
@@ -147,66 +153,10 @@ class EMOLoss(nn.Module):
             })
 
         return results
-    def extract_student_indices(self, input_data, topk_results):
-        student_qry_input_ids = input_data['student_inputs']['qry']['input_ids']
-        student_pos_input_ids = input_data['student_inputs']['pos']['input_ids']
-        batch_size = len(topk_results)
-        student_indices = []
-        
-        for i in range(batch_size):
-            s_qry_ids = student_qry_input_ids[i].tolist()
-            s_pos_ids = student_pos_input_ids[i].tolist()
-            
-            s_qry_id_to_indices = {}
-            for j, token_id in enumerate(s_qry_ids):
-                if token_id not in s_qry_id_to_indices:
-                    s_qry_id_to_indices[token_id] = []
-                s_qry_id_to_indices[token_id].append(j)
 
-            s_pos_id_to_indices = {}
-            for j, token_id in enumerate(s_pos_ids):
-                if token_id not in s_pos_id_to_indices:
-                    s_pos_id_to_indices[token_id] = []
-                s_pos_id_to_indices[token_id].append(j)
-
-            qry_topk = topk_results[i]['qry_topk']
-            pos_topk = topk_results[i]['pos_topk']
-            
-            qry_student_idx = []
-            used_qry_indices = set()
-            for _, token_id, _ in qry_topk:
-                if token_id in s_qry_id_to_indices:
-                    for index in s_qry_id_to_indices[token_id]:
-                        if index not in used_qry_indices:
-                            qry_student_idx.append(index)
-                            used_qry_indices.add(index)
-                            break 
-
-            pos_student_idx = []
-            used_pos_indices = set()
-            for _, token_id, _ in pos_topk:
-                if token_id in s_pos_id_to_indices:
-                    for index in s_pos_id_to_indices[token_id]:
-                        if index not in used_pos_indices:
-                            pos_student_idx.append(index)
-                            used_pos_indices.add(index)
-                            break
-                            
-            student_indices.append({
-                "qry": qry_student_idx,
-                "pos": pos_student_idx
-            })
-
-        return student_indices
-    
     def compute_token_importance(self, attention_weights, num_tokens):
         """
         Compute token importance from attention weights
-        Args:
-            attention_weights: [num_heads, seq_len, seq_len] or [seq_len, seq_len]
-            num_tokens: number of valid tokens
-        Returns:
-            norm_importance: normalized importance scores [num_tokens]
         """
         device = attention_weights.device
         
@@ -228,7 +178,6 @@ class EMOLoss(nn.Module):
         Compute OT loss for retrieval task between teacher and student hidden states
         using full text tokens, with importance mass computed from top-k tokens
         """
-        # Unpack outputs
         student_qry_rep, student_qry_image_features, student_qry_attention, student_qry_hidden_states = student_qry_output
         student_pos_rep, student_pos_image_features, student_pos_attention, student_pos_hidden_states = student_pos_output
         teacher_qry_rep, teacher_qry_image_features, teacher_qry_attention, teacher_qry_hidden_states = teacher_qry_output
@@ -244,11 +193,9 @@ class EMOLoss(nn.Module):
         if not hasattr(distiller, 'projectors') or "t2s" not in distiller.projectors:
             raise AttributeError("Projector 't2s' not found in distiller.projectors for OT loss computation.")
         
-        student_idx = self.extract_student_indices(input_data, topk_results)
         total_ot_loss = 0.0
         
         for i in range(batch_size):
-            # Get top-k token indices (only for computing importance)
             qry_topk_idx = [idx for idx, _, _ in topk_results[i]['qry_topk']]
             pos_topk_idx = [idx for idx, _, _ in topk_results[i]['pos_topk']]
             
@@ -292,12 +239,11 @@ class EMOLoss(nn.Module):
                 print(f"Warning: No text tokens found for student instance {i}")
                 continue
             
-            # === Compute importance mass for Query (using top-k) ===
+            # === Compute importance mass for Query ===
             teacher_qry_attn = teacher_qry_attention[-1][i]
             teacher_qry_importance_full = self.compute_token_importance(teacher_qry_attn, teacher_qry_input_ids.size(0))
             teacher_qry_importance = teacher_qry_importance_full[teacher_qry_text_indices]
             
-            # Project importance to student tokens
             student_qry_importance = torch.zeros(len(student_qry_text_indices), device=device)
             for t_idx, teacher_idx in enumerate(teacher_qry_text_indices):
                 teacher_token_id = teacher_qry_input_ids[teacher_idx].item()
@@ -318,7 +264,7 @@ class EMOLoss(nn.Module):
             teacher_qry_mass = teacher_qry_importance.view(-1, 1)
             student_qry_mass = student_qry_importance.view(-1, 1)
             
-            # === Compute importance mass for Positive (using top-k) ===
+            # === Compute importance mass for Positive ===
             teacher_pos_attn = teacher_pos_attention[-1][i]
             teacher_pos_importance_full = self.compute_token_importance(teacher_pos_attn, teacher_pos_input_ids.size(0))
             teacher_pos_importance = teacher_pos_importance_full[teacher_pos_text_indices]
@@ -382,7 +328,6 @@ class EMOLoss(nn.Module):
         sim_mt = 1 - sim_mt
         return sim_mt
 
-    
     def sinkhorn(self, cost_matrix, a, b, num_iters=None):
         if num_iters is None:
             num_iters = self.OT_max_iter
@@ -441,7 +386,6 @@ class EMOLoss(nn.Module):
         student_layer_num = len(student_qry_attention)
         layer_per_block = teacher_layer_num // student_layer_num
 
-        # Lấy k layer cuối cùng của student
         student_last_k_qry = student_qry_attention[-k_layer:]
         student_last_k_pos = student_pos_attention[-k_layer:]
         
@@ -451,37 +395,73 @@ class EMOLoss(nn.Module):
             teacher_qry_mapped.append(teacher_qry_attention[i * layer_per_block + layer_per_block - 1])
             teacher_pos_mapped.append(teacher_pos_attention[i * layer_per_block + layer_per_block - 1])
         
-        student_idx = self.extract_student_indices(input_data, topk_results)
+        student_qry_input_ids = input_data['student_inputs']['qry']['input_ids']
+        student_pos_input_ids = input_data['student_inputs']['pos']['input_ids']
         
         for i in range(batch_size):
-            qry_topk_idx = [idx for idx, _, _ in topk_results[i]['qry_topk']]
-            pos_topk_idx = [idx for idx, _, _ in topk_results[i]['pos_topk']]
+            qry_topk = topk_results[i]['qry_topk']
+            pos_topk = topk_results[i]['pos_topk']
             
-            if len(qry_topk_idx) == 0 or len(pos_topk_idx) == 0:
-                print("Warning: No valid top-k tokens found for instance {}, skipping attention loss computation.".format(i))
+            s_qry_ids = student_qry_input_ids[i].tolist()
+            s_pos_ids = student_pos_input_ids[i].tolist()
+            
+            s_qry_id_to_indices = {}
+            for j, token_id in enumerate(s_qry_ids):
+                if token_id not in s_qry_id_to_indices:
+                    s_qry_id_to_indices[token_id] = []
+                s_qry_id_to_indices[token_id].append(j)
+
+            s_pos_id_to_indices = {}
+            for j, token_id in enumerate(s_pos_ids):
+                if token_id not in s_pos_id_to_indices:
+                    s_pos_id_to_indices[token_id] = []
+                s_pos_id_to_indices[token_id].append(j)
+
+            # === Mapping chặt chẽ (Strict Pairing) cho QRY ===
+            valid_t_qry_idx = []
+            valid_s_qry_idx = []
+            used_qry_indices = set()
+            for t_idx, token_id, _ in qry_topk:
+                if token_id in s_qry_id_to_indices:
+                    for s_idx in s_qry_id_to_indices[token_id]:
+                        if s_idx not in used_qry_indices and s_idx < student_last_k_qry[0].size(2):
+                            valid_t_qry_idx.append(t_idx)
+                            valid_s_qry_idx.append(s_idx)
+                            used_qry_indices.add(s_idx)
+                            break 
+
+            # === Mapping chặt chẽ (Strict Pairing) cho POS ===
+            valid_t_pos_idx = []
+            valid_s_pos_idx = []
+            used_pos_indices = set()
+            for t_idx, token_id, _ in pos_topk:
+                if token_id in s_pos_id_to_indices:
+                    for s_idx in s_pos_id_to_indices[token_id]:
+                        if s_idx not in used_pos_indices and s_idx < student_last_k_pos[0].size(2):
+                            valid_t_pos_idx.append(t_idx)
+                            valid_s_pos_idx.append(s_idx)
+                            used_pos_indices.add(s_idx)
+                            break
+            
+            if len(valid_t_qry_idx) == 0 or len(valid_t_pos_idx) == 0:
+                print("Warning: No valid paired tokens found for instance {}, skipping attention loss computation.".format(i))
                 continue
             
-            s_qry_topk_idx = [idx for idx in student_idx[i]['qry'] if idx < student_last_k_qry[0].size(2)]
-            s_pos_topk_idx = [idx for idx in student_idx[i]['pos'] if idx < student_last_k_pos[0].size(2)]
-            
-            # Tính attention loss cho k layer cuối
             for teacher_qry_att, teacher_pos_att, student_qry_att, student_pos_att in zip(
                 teacher_qry_mapped, teacher_pos_mapped, student_last_k_qry, student_last_k_pos
             ):
-                tq_mean = teacher_qry_att[i, :, qry_topk_idx, :].mean(dim=0)
-                tp_mean = teacher_pos_att[i, :, pos_topk_idx, :].mean(dim=0)
-                sq_mean = student_qry_att[i, :, s_qry_topk_idx, :].mean(dim=0)
-                sp_mean = student_pos_att[i, :, s_pos_topk_idx, :].mean(dim=0)
+                tq_mean = teacher_qry_att[i, :, valid_t_qry_idx, :].mean(dim=0)
+                tp_mean = teacher_pos_att[i, :, valid_t_pos_idx, :].mean(dim=0)
+                sq_mean = student_qry_att[i, :, valid_s_qry_idx, :].mean(dim=0)
+                sp_mean = student_pos_att[i, :, valid_s_pos_idx, :].mean(dim=0)
                 
-                # Mask -inf values
                 tq_mean = torch.where(tq_mean <= -1e2, torch.zeros_like(tq_mean), tq_mean)
                 sq_mean = torch.where(sq_mean <= -1e2, torch.zeros_like(sq_mean), sq_mean)
                 tp_mean = torch.where(tp_mean <= -1e2, torch.zeros_like(tp_mean), tp_mean)
                 sp_mean = torch.where(sp_mean <= -1e2, torch.zeros_like(sp_mean), sp_mean)
 
-                # Tính CKA loss cho layer hiện tại
                 att_loss = cka_fn_loss(tq_mean, sq_mean) + cka_fn_loss(tp_mean, sp_mean)
                 att_loss_total += att_loss / 2
         
         # Average over batch_size và k_layer
-        return att_loss_total / (batch_size)
+        return att_loss_total / (batch_size * k_layer)
