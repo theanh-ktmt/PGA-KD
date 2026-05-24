@@ -11,3 +11,5 @@ wandb/
 eval_outputs/
 eval_images/
 models/
+*.pt
+*.pth
