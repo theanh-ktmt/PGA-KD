@@ -148,10 +148,10 @@ class PGAKDLoss(nn.Module):
         # --- 1. Forward Pass & Feature Extraction ---
         with torch.no_grad():
             teacher_model.eval()
-            t_qry, _, _, t_qry_hiddens = teacher_model.encode_input(input_data['teacher_inputs']['qry'])
+            t_qry, _, t_qry_attn, t_qry_hiddens = teacher_model.encode_input(input_data['teacher_inputs']['qry'])
             t_pos, _, _, t_pos_hiddens = teacher_model.encode_input(input_data['teacher_inputs']['pos'])
 
-        s_qry, _, _, s_qry_hiddens = student_model.encode_input(input_data['student_inputs']['qry'])
+        s_qry, _, s_qry_attn, s_qry_hiddens = student_model.encode_input(input_data['student_inputs']['qry'])
         s_pos, _, _, s_pos_hiddens = student_model.encode_input(input_data['student_inputs']['pos'])
 
         # --- 2. Base Objective: Contrastive (InfoNCE) ---
@@ -180,7 +180,8 @@ class PGAKDLoss(nn.Module):
 
         # --- 5. SCL Objective: Semantic Consistency Learning ---
         loss_scl = self._compute_scl_loss(
-            s_qry_hiddens, t_qry_hiddens, 
+            s_qry_hiddens, t_qry_hiddens,
+            s_qry_attn, t_qry_attn,
             input_data['student_inputs']['qry']['input_ids'],
             input_data['teacher_inputs']['qry']['input_ids'],
             self.student_processor,
@@ -271,8 +272,9 @@ class PGAKDLoss(nn.Module):
     # ==========================
     # SCL Helper Methods
     # ==========================
-    def _compute_scl_loss(self, 
-                          s_hidden: Any, t_hidden: Any, 
+    def _compute_scl_loss(self,
+                          s_hidden: Any, t_hidden: Any,
+                          s_attn: Any, t_attn: Any,
                           s_ids: torch.Tensor, t_ids: torch.Tensor,
                           processor_student: Optional[ProcessorMixin],
                           processor_teacher: Optional[ProcessorMixin],
@@ -280,18 +282,22 @@ class PGAKDLoss(nn.Module):
         """
         Computes Semantic Consistency Learning loss via MI maximization on 4 pathways.
         Uses specialized projectors for cross-modal alignment.
+
+        Note: `s_hidden`/`t_hidden` are the tuples of per-layer hidden states returned
+        by `encode_input` (index 3), and `s_attn`/`t_attn` are the per-layer attention
+        matrices (index 2).
         """
         if processor_student is None or processor_teacher is None:
             logger.warning("SCL loss requires processors for both student and teacher models.")
             return torch.tensor(0.0, device=s_ids.device)
 
         if not self.initialized_scl_projectors:
-            self.scl_projectors = SCLProjectors(self.teacher_dim, self.student_dim).to(s_hidden.hidden_states[-1].device)
+            self.scl_projectors = SCLProjectors(self.teacher_dim, self.student_dim).to(s_hidden[-1].device)
             self.initialized_scl_projectors = True
 
         # 1. Extract modality-specific representations (Raw)
-        s_img, s_txt = self._get_image_text_representation(s_hidden, processor_student, s_ids)
-        t_img_raw, t_txt_raw = self._get_image_text_representation(t_hidden, processor_teacher, t_ids)
+        s_img, s_txt = self._get_image_text_representation(s_hidden, s_attn, processor_student, s_ids)
+        t_img_raw, t_txt_raw = self._get_image_text_representation(t_hidden, t_attn, processor_teacher, t_ids)
 
         # 2. Project Teacher features to Student space using specific projectors
         # Returns: (Intra-Img, Intra-Txt, Cross-Img, Cross-Txt)
@@ -329,13 +335,17 @@ class PGAKDLoss(nn.Module):
         
         return nn.CrossEntropyLoss()(logits, labels)
 
-    def _get_image_text_representation(self, output_hidden_states: Any, processor: ProcessorMixin, input_ids: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    def _get_image_text_representation(self, hidden_states: Any, attentions: Any, processor: ProcessorMixin, input_ids: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Extracts image and text representations robustly handling token expansion.
+
+        Args:
+            hidden_states: Tuple of per-layer hidden states (encode_input index 3).
+            attentions: Tuple of per-layer attention matrices (encode_input index 2).
         """
         # import pdb; pdb.set_trace()
         # 1. Chuẩn hóa input_ids thành Tensor
-        last_hidden_state = output_hidden_states.hidden_states[-1] # (Batch, Seq_Out, Dim)
+        last_hidden_state = hidden_states[-1] # (Batch, Seq_Out, Dim)
         device = last_hidden_state.device
         
         if not isinstance(input_ids, torch.Tensor):
@@ -417,7 +427,7 @@ class PGAKDLoss(nn.Module):
 
         # 5. Attention Weighted Pooling (Dùng mask mới tạo)
         # Lấy attention weights của token [EOS] (thường là token cuối cùng)
-        last_attention = output_hidden_states.attentions[-1] 
+        last_attention = attentions[-1]
         last_token_attention = last_attention[:, :, -1, :] 
         avg_attn = last_token_attention.mean(dim=1) # (Batch, Seq_Out)
 
