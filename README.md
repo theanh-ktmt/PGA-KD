@@ -1,155 +1,190 @@
-
 # PGA-KD: Principal Geometry Alignment and Semantic Consistency for VLM2Vec Distillation
 
-This is the official PyTorch implementation of the paper:
+Official PyTorch implementation of our EMNLP 2026 paper.
 
-**"PGA-KD: Principal Geometry Alignment and Semantic Consistency for VLM2Vec Distillation"**
+The-Anh Tran<sup>1</sup>\*, Thanh Xuan Nguyen<sup>1</sup>\*, Duc Anh Nguyen<sup>1</sup>, Dinh Viet Sang<sup>1</sup>, Linh Ngo Van<sup>1</sup>, Thien Huu Nguyen<sup>2</sup>
 
-## 📖 Abstract
+<sup>1</sup>Hanoi University of Science and Technology &nbsp;&nbsp; <sup>2</sup>University of Oregon &nbsp;&nbsp; \*equal contribution
 
-Adapting large vision–language models (VLMs) for embedding tasks (VLM2Vec) is standard practice, but distilling them into compact architectures is challenging due to mismatched tokenization and "geometric noise" in high-capacity teachers.
+---
 
-**PGA-KD** is a robust distillation framework that addresses these issues via two core components:
+Adapting large vision-language models for embedding tasks (VLM2Vec) is standard practice, but distilling them
+into compact architectures remains hard: teacher and student differ in tokenization, hidden size, and in how
+they mix modalities. PGA-KD addresses this with two complementary objectives:
 
-1. **Principal Geometry Alignment (PGA):** Decomposes the teacher’s representation space via spectral analysis to filter out high-frequency geometric noise (the "spectral tail"). It forces the student to align only with the principal semantic components ( eigenvectors capturing  energy).
-2. **Semantic Consistency Learning (SCL):** Maximizes Mutual Information (MI) across intra-modal (Image-Image, Text-Text) and inter-modal (Image-Text) pathways to ensure the student inherits the teacher's reasoning logic, not just output features.
+- **Principal Geometry Alignment (PGA).** The teacher's batch Gram matrix is eigendecomposed and truncated to
+  the top-*k* components carrying η of the total energy. The student is aligned to this denoised geometry
+  through Centered Kernel Alignment, so it spends its limited capacity on the principal semantic structure
+  instead of the spectral tail.
+- **Semantic Consistency Learning (SCL).** Visual and textual features are pooled with the last token's
+  attention map, then matched to the teacher through four InfoNCE pathways — two intra-modal (image-image,
+  text-text) and two inter-modal (image-text, text-image) — which keeps the compact student from collapsing
+  onto a single modality.
 
 <p align="center">
-<img src="./asset/overview.png" alt="PGA-KD Framework Overview" width="800">
-
-
-
-
-
-<em>Figure 1: The PGA-KD Distillation Framework.</em>
+  <img src="./asset/overview.png" alt="PGA-KD framework" width="820">
+  <br>
+  <em>The PGA-KD distillation framework: InfoNCE + MSE anchor point-wise features, L<sub>PGA</sub> aligns the
+  noise-filtered geometry, L<sub>SCL</sub> synchronises intra- and inter-modal dependencies.</em>
 </p>
 
-## 🛠️ Environment Setup
+## Objective
 
-### 1. Installation
-
-Create a virtual environment and install the required dependencies.
-
-```bash
-# Create and activate environment
-python -m venv vlm
-source vlm/bin/activate
-
-# Install dependencies
-pip install -r requirements.txt
+```
+L_total = L_InfoNCE + λ_MSE · L_MSE + λ_PGA · L_PGA + λ_SCL · L_SCL
 ```
 
-### 2. Library Patch
+where `L_PGA = 1 - CKA(G̃_S, G̃_T)` is computed against the truncated teacher Gram matrix and
+`L_SCL = L_intra + L_inter` sums the four alignment pathways. Both live in
+[`src/criterions/pga.py`](src/criterions/pga.py).
 
-**Important:** This project requires a modification to the `transformers` library to support Qwen2-VL processing correctly during distillation. Run the provided patch script:
+<p align="center">
+  <img src="./asset/spectrum_eta_85.png" alt="Eigenvalue spectrum" width="410">
+  <img src="./asset/tsne_pro_layout.png" alt="t-SNE before and after filtering" width="410">
+  <br>
+  <em>Left: with B = 64, the top 33 eigenvalues already cover η = 85% of the teacher's energy.
+  Right: dropping the tail raises the Silhouette score of the batch geometry from 0.074 to 0.114.</em>
+</p>
+
+## Results
+
+MMEB averages with **B3-Qwen2-2B** as teacher (d<sub>T</sub> = 1536) and 0.5B students (d<sub>S</sub> = 896).
+Per-dataset scores, OOD results, ablations and runtime are in [docs/RESULTS.md](docs/RESULTS.md).
+
+**FastVLM-0.5B student, in-distribution**
+
+| Method | Classification | VQA | Retrieval | Grounding |
+| ------ | -------------- | --- | --------- | --------- |
+| Teacher | 77.4 | 62.3 | 72.9 | 70.5 |
+| Student | 64.7 | 50.8 | 55.8 | 65.0 |
+| MSE | 65.0 | 51.3 | 56.9 | 68.3 |
+| RKD | 66.2 | 51.3 | 55.9 | 68.1 |
+| CKD | 66.1 | 51.4 | 56.2 | 68.7 |
+| EMO | 63.9 | 50.8 | 24.3 | 66.8 |
+| EM-KD | 64.3 | 51.5 | 57.3 | 69.2 |
+| **PGA-KD** | **69.4** | **54.0** | **60.2** | **69.5** |
+
+**LLaVA-OneVision-0.5B student, in-distribution**
+
+| Method | Classification | VQA |
+| ------ | -------------- | --- |
+| Student | 65.9 | 36.6 |
+| CKD (best baseline) | 66.9 | 40.3 |
+| **PGA-KD** | **70.4** | **41.0** |
+
+Gains are largest on reasoning and retrieval (OK-VQA +8.8, VisDial +12.1 over the student). They are flat on
+DocVQA and negative on ChartQA: filtering the low-energy tail trades fine-grained textual detail for a
+cleaner global structure. Raising η to 0.95 recovers the best DocVQA score when the target workload is OCR-
+or document-heavy.
+
+## Setup
 
 ```bash
+python -m venv vlm
+source vlm/bin/activate
+pip install -r requirements.txt
 python fix_lib.py
 ```
 
-*This script automatically comments out conflicting lines in `transformers/models/qwen2_vl/image_processing_qwen2_vl.py`.*
+`fix_lib.py` patches `transformers/models/qwen2_vl/image_processing_qwen2_vl.py`, which otherwise rejects the
+teacher's image batches during distillation.
 
-## 📂 Data Preparation
+Experiments were run on 8× A100 80GB with bf16 and DDP. All students are trained with LoRA, so a single node
+is enough to reproduce any track.
 
-We utilize the **Massive Multimodal Embedding Benchmark (MMEB)** for training and evaluation.
+## Data
 
-### Automated Download
-
-We provide a script to download the necessary MMEB training and evaluation datasets using `huggingface-hub`. The data will be organized into `./vlm2vec_train/MMEB-train/images`.
+Training and evaluation both use [MMEB](https://huggingface.co/datasets/TIGER-Lab/MMEB-train).
 
 ```bash
+# ~20 training subsets -> vlm2vec_train/MMEB-train/images
 python download.py
-```
 
-*Note: This downloads approximately 20 datasets. Please ensure sufficient disk space and a stable internet connection.*
-
-### Manual Download (Optional)
-
-If you only need evaluation images:
-
-```bash
+# evaluation images
 wget https://huggingface.co/datasets/TIGER-Lab/MMEB-eval/resolve/main/images.zip
-unzip images.zip -d eval_images/
-rm images.zip
+unzip images.zip -d eval_images/ && rm images.zip
 ```
 
-## 🚀 Training
+## Training
 
-All training scripts are located in the `scripts/` directory. We support distillation for two tracks as described in the paper: **FastVLM** (High Compression) and **OneVision** (Architectural Shift).
-
-### 1. Train PGA-KD (Proposed Method)
-
-To train the student model using **Principal Geometry Alignment** and **Semantic Consistency Learning**:
+One script per (meta-task, student). Each sets its LoRA rank, batch size and loss weights, then calls
+`main.py` through `torchrun`.
 
 ```bash
-# Classification Task
-bash scripts/cls/train_PGA_fastvlm.sh
+bash scripts/cls/train_PGA_fastvlm.sh              # classification
+bash scripts/vqa/train_PGA_fastvlm.sh              # VQA
+bash scripts/retrieval/train_PGA_fastvlm.sh        # retrieval
+bash scripts/grounding/train_PGA_fastvlm.sh        # grounding
 
-bash scripts/cls/train_PGA_llava_onevision.sh
-
-# VQA Task
-bash scripts/vqa/train_PGA_fastvlm.sh
-
-bash scripts/vqa/train_PGA_llava_onevision.sh
+bash scripts/cls/train_PGA_llava_onevision.sh      # same tasks, OneVision student
 ```
-### 2. Train Baselines
 
-We provide scripts to reproduce the baselines reported in the paper (MSE, RKD, CKD, EMO, EM-KD).
+Baselines follow the same layout in every task folder: `train_student.sh` (no distillation), `train_MSE.sh`,
+`train_RKD.sh`, `train_CKD.sh`, `train_EMO.sh`, `train_EMKD.sh`. Per-track hyperparameters are listed in
+[docs/TRAINING.md](docs/TRAINING.md).
+
+The knobs worth touching first:
+
+| Flag | Value used | Meaning |
+| ---- | ---------- | ------- |
+| `--kd_loss_type pga` | – | selects `PGAKDLoss` |
+| `--pga_loss_weight` | 2.0 | λ<sub>PGA</sub> |
+| `--pga_scl_loss_weight` | 0.01 | λ<sub>SCL</sub>, kept small so the four sub-losses do not dominate |
+| `--pga_mse_loss_weight` | 1.0 | λ<sub>MSE</sub> |
+| `--pga_spectral_variance_threshold` | 0.85 | η, the cumulative energy kept after truncation |
+
+## Evaluation
+
+Point `EXP_NAME` in the script at the checkpoint you want to score, then:
 
 ```bash
-# Standard MSE Distillation for CLS task
-bash scripts/cls/train_MSE.sh
-
-# Relational Knowledge Distillation (RKD)
-bash scripts/cls/train_RKD.sh
-
-# Comparative Knowledge Distillation (CKD)
-bash scripts/cls/train_CKD.sh
-
-# Standard MSE Distillation for VQA task
-bash scripts/vqa/train_MSE.sh
-
-# Relational Knowledge Distillation (RKD)
-bash scripts/vqa/train_RKD.sh
-
-# Comparative Knowledge Distillation (CKD)
-bash scripts/vqa/train_CKD.sh
+bash scripts/cls/run_eval.sh
+bash scripts/vqa/run_eval.sh
+bash scripts/retrieval/run_eval.sh
+bash scripts/grounding/run_eval.sh
 ```
 
-### 3. Configuration
-
-Key hyperparameters (as detailed in the Appendix) can be modified inside the `.sh` scripts:
-
-* `--lambda_pga`: Weight for geometric loss (Default: 2.0)
-* `--lambda_scl`: Weight for semantic consistency loss (Default: 0.01)
-* `--spectral_threshold`: Cumulative energy threshold  (Default: 0.85)
-* `--lora_r`: LoRA rank for the student (Default: 128)
-
-## 📊 Evaluation
-
-To evaluate the distilled model on MMEB (Classification and VQA tasks), run the evaluation script. Ensure the model checkpoint path is correctly set in the script.
+Each script launches `eval_mmeb.py` with `accelerate` over the subsets of that meta-task and writes encodings
+and scores to `eval_outputs/$EXP_NAME`. To collect several runs into one table:
 
 ```bash
-bash scripts/run_eval.sh
+python scripts/parse_eval_results.py
+python scripts/compare_performance.py
 ```
 
-### Expected Performance
+## Models
 
-Based on Table 1 and Table 2 of the paper, PGA-KD achieves state-of-the-art results:
+| Role | Architecture | Checkpoint | Hidden dim |
+| ---- | ------------ | ---------- | ---------- |
+| Teacher | Qwen2-VL-2B + Qwen2-VL ViT | `raghavlite/B3_Qwen2_2B` | 1536 |
+| Student 1 | FastVLM + MobileCLIP-L | `apple/FastVLM-0.5B` | 896 |
+| Student 2 | LLaVA-OneVision + SigLIP-SO400M | `llava-hf/llava-onevision-qwen2-0.5b-ov-hf` | 896 |
 
-| Student Model | Method | Avg Classification | Avg VQA |
-| --- | --- | --- | --- |
-| **FastVLM-0.5B** | Student (Base) | 64.7 | 50.8 |
-|  | RKD | 66.2 | 51.3 |
-|  | **PGA-KD (Ours)** | **69.4** | **54.0** |
+## Layout
 
-## 🧩 Model Zoo
+```
+main.py                  distillation entry point
+eval_mmeb.py             MMEB evaluation
+src/criterions/pga.py    PGA + SCL losses and the SCL projectors
+src/criterions/          baselines: mse, ckd, holo, emo_loss, em_kd, contrastive_loss_with_RKD
+src/distiller.py         teacher/student wrapper and projector setup
+src/model/               VLM2Vec model and backbones
+scripts/<task>/          training and evaluation scripts per meta-task
+config/                  DeepSpeed and projector configs
+docs/                    full results and training reference
+```
 
-| Role | Architecture | Model ID | Dim () |
-| --- | --- | --- | --- |
-| **Teacher** | Qwen2-VL + SigLIP | `raghavlite/B3_Qwen2_2B` | 1536 |
-| **Student 1** | FastVLM + MobileCLIP | `apple/FastVLM-0.5B` | 768 |
-| **Student 2** | LLaVA-OneVision | `llava-onevision-qwen2-0.5b-ov-hf` | 768 |
+## Citation
+
+```bibtex
+@inproceedings{tran2026pgakd,
+  title     = {{PGA-KD}: Principal Geometry Alignment and Semantic Consistency for {VLM2Vec} Distillation},
+  author    = {Tran, The-Anh and Nguyen, Thanh Xuan and Nguyen, Duc Anh and
+               Sang, Dinh Viet and Van, Linh Ngo and Nguyen, Thien Huu},
+  booktitle = {Proceedings of the 2026 Conference on Empirical Methods in Natural Language Processing},
+  year      = {2026}
+}
+```
 
 ## 🙏 Acknowledgements
 
