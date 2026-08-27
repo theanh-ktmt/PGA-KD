@@ -18,4 +18,4 @@ with open(file_path, "w") as f:
         else:
             f.write(line)
 
-print(f"✅ Done! Lines {start_line}-{end_line} have been commented.")
+print(f"Done. Lines {start_line}-{end_line} have been commented out.")

@@ -19,7 +19,7 @@ TEMP_DOWNLOAD_DIR = "./downloads"
 def download_file(file_name):
     """Downloads a single file from the Hugging Face Hub."""
     repo_path = f"images_zip/{file_name}"
-    print(f"⬇️ Downloading {file_name} ...")
+    print(f"Downloading {file_name} ...")
     try:
         downloaded_path = hf_hub_download(
             repo_id=DATASET_REPO,
@@ -29,7 +29,7 @@ def download_file(file_name):
         )
         return downloaded_path
     except Exception as e:
-        print(f"❌ Failed to download {file_name}. Error: {e}")
+        print(f"Failed to download {file_name}: {e}")
         return None
 
 def unzip_file(zip_path):
@@ -42,7 +42,7 @@ def unzip_file(zip_path):
         os.remove(zip_path)
         print(f"✔️ Unzipped and removed {zip_path}")
     except Exception as e:
-        print(f"❌ Failed to unzip {zip_path}. Error: {e}")
+        print(f"Failed to unzip {zip_path}: {e}")
 
 def main():
     """Main function to download and unzip all files."""

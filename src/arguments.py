@@ -10,9 +10,7 @@ from typing import List, Optional
 
 from transformers import TrainingArguments as HFTrainingArguments
 
-# =============================================================================
-#  Method-Specific Argument Mixins (New Configs)
-# =============================================================================
+# Method-specific argument mixins
 
 @dataclass
 class DistillationArguments:
@@ -217,10 +215,6 @@ class PGAArguments:
     )   
 
     
-
-# =============================================================================
-#  Main Argument Classes
-# =============================================================================
 
 @dataclass
 class ModelArguments:

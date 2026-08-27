@@ -40,7 +40,7 @@ class EMKDLoss(nn.Module):
         num_text_qry_tokens = ((teacher_qry_input['input_ids'] < 151643) | (teacher_qry_input['input_ids'] > 151656)).sum(dim=1)
         num_text_pos_tokens = ((teacher_pos_input['input_ids'] < 151643) | (teacher_pos_input['input_ids'] > 151656)).sum(dim=1)
         
-        # ADD THIS: Student counts (Assuming the student uses the same tokenizer/image IDs)
+        # student counts, assuming it shares the tokenizer/image ids
         num_text_qry_tokens_stu = ((student_qry_input['input_ids'] < 151643) | (student_qry_input['input_ids'] > 151656)).sum(dim=1)
         num_text_pos_tokens_stu = ((student_pos_input['input_ids'] < 151643) | (student_pos_input['input_ids'] > 151656)).sum(dim=1)
         
@@ -77,27 +77,20 @@ class EMKDLoss(nn.Module):
         loss_vlad = 0.0
         # Compute KD Loss
         for i in range(batch_size):
-            # print(f"Sample {i}: num_text_qry_tokens {num_text_qry_tokens[i]}, num_text_pos_tokens {num_text_pos_tokens[i]}")
-            # print(f"Sample {i} input_ids ids of teacher {teacher_qry_input['input_ids'][i]}, pos {teacher_pos_input['input_ids'][i]}")
-            # print(f"Sample {i} input_ids ids of student {student_qry_input['input_ids'][i]}, pos {student_pos_input['input_ids'][i]}")
             if student_qry_image_features is not None and teacher_qry_image_features is not None:
                 if cur_idx_qry_img < len(student_qry_image_features) and cur_idx_qry_img < len(teacher_qry_image_features):
                     if student_qry_image_features[cur_idx_qry_img] is not None and teacher_qry_image_features[cur_idx_qry_img] is not None:
                         num_tokens_vision_qry_stu = student_qry_image_features[cur_idx_qry_img].size(0)
                         num_tokens_vision_qry_tea = teacher_qry_image_features[cur_idx_qry_img].size(0)
-                        # print(f"Sample qry {i}: num_tokens_vision_qry_stu {num_tokens_vision_qry_stu}, num_tokens_vision_qry_tea {num_tokens_vision_qry_tea}")
                         num_text_token_qry_tea = num_text_qry_tokens[i]
-                        # ADD THIS:
                         num_text_token_qry_stu = num_text_qry_tokens_stu[i]
                         
-                        # UPDATE STUDENT SLICING TO MATCH TEACHER:
+                        # slice the student the same way as the teacher
                         student_qry_vision_hidden_state = student_qry_hidden_states[-1][i][-(num_tokens_vision_qry_stu + num_text_token_qry_stu):-(num_text_token_qry_stu), :]
                         teacher_qry_vision_hidden_state = teacher_qry_hidden_states[-1][i][-(num_tokens_vision_qry_tea + num_text_token_qry_tea):-(num_text_token_qry_tea), :]
                         
                         student_qry_text_hidden_state = student_qry_hidden_states[-1][i][-num_text_token_qry_stu:, :]
                         teacher_qry_text_hidden_state = teacher_qry_hidden_states[-1][i][-num_text_token_qry_tea:, :]
-                        # print(f"Sample qry {i}: student_qry_vision_hidden_state shape {student_qry_vision_hidden_state.shape}, teacher_qry_vision_hidden_state shape {teacher_qry_vision_hidden_state.shape}, student_qry_text_hidden_state shape {student_qry_text_hidden_state.shape}, teacher_qry_text_hidden_state shape {teacher_qry_text_hidden_state.shape}")
-                        # print(f"Sample qry {i}: student_qry_hidden_state shape {student_qry_hidden_states[-1][i].shape}, teacher_qry_hidden_state shape {teacher_qry_hidden_states[-1][i].shape}")
                         vl_s = student_model.encoder.lm_head(student_qry_vision_hidden_state)
                         vl_t = teacher_model.encoder.lm_head(teacher_qry_vision_hidden_state)
                         
@@ -110,7 +103,7 @@ class EMKDLoss(nn.Module):
                         idx_t = torch.tensor(idx_t, dtype=torch.long, device=vl_t.device)
                         idx_s = torch.tensor(idx_s, dtype=torch.long, device=vl_s.device)
                         
-                        # SAFEGUARD 1: Ensure we actually matched vision tokens
+                        # skip when no vision tokens matched
                         if len(idx_s) > 0:
                             vl_s_matched = vl_s[idx_s]
                             vl_t_matched = vl_t[idx_t]
@@ -121,7 +114,7 @@ class EMKDLoss(nn.Module):
                             
                             min_text_len_qry = min(student_qry_text_hidden_state.size(0), teacher_qry_text_hidden_state.size(0))
                             
-                            # SAFEGUARD 2: Ensure there are actually text tokens before computing VLAD
+                            # VLAD needs at least one text token
                             if min_text_len_qry > 0:
                                 student_qry_text_hidden_state = student_qry_text_hidden_state[-min_text_len_qry:, :]
                                 teacher_qry_text_hidden_state = teacher_qry_text_hidden_state[-min_text_len_qry:, :]
@@ -137,7 +130,6 @@ class EMKDLoss(nn.Module):
                     if student_pos_image_features[cur_idx_pos_img] is not None and teacher_pos_image_features[cur_idx_pos_img] is not None:
                         num_tokens_vision_pos_stu = student_pos_image_features[cur_idx_pos_img].size(0)
                         num_tokens_vision_pos_tea = teacher_pos_image_features[cur_idx_pos_img].size(0)
-                        # print(f"Sample pos {i}: num_tokens_vision_pos_stu {num_tokens_vision_pos_stu}, num_tokens_vision_pos_tea {num_tokens_vision_pos_tea}")
                         num_text_token_pos_tea = num_text_pos_tokens[i]
                         num_text_token_pos_stu = num_text_pos_tokens_stu[i]
                         student_pos_vision_hidden_state = student_pos_hidden_states[-1][i][-(num_tokens_vision_pos_stu + num_text_token_pos_stu):-(num_text_token_pos_stu), :]
@@ -145,8 +137,6 @@ class EMKDLoss(nn.Module):
                         
                         student_pos_text_hidden_state = student_pos_hidden_states[-1][i][-num_text_token_pos_stu:, :]
                         teacher_pos_text_hidden_state = teacher_pos_hidden_states[-1][i][-num_text_token_pos_tea:, :]
-                        # print(f"Sample pos {i}: student_pos_vision_hidden_state shape {student_pos_vision_hidden_state.shape}, teacher_pos_vision_hidden_state shape {teacher_pos_vision_hidden_state.shape}, student_pos_text_hidden_state shape {student_pos_text_hidden_state.shape}, teacher_pos_text_hidden_state shape {teacher_pos_text_hidden_state.shape}")
-                        # print(f"Sample pos {i}: student_pos_hidden_state shape {student_pos_hidden_states[-1][i].shape}, teacher_pos_hidden_state shape {teacher_pos_hidden_states[-1][i].shape}")
                         vp_s = student_model.encoder.lm_head(student_pos_vision_hidden_state)
                         vp_t = teacher_model.encoder.lm_head(teacher_pos_vision_hidden_state)
                         
@@ -159,7 +149,7 @@ class EMKDLoss(nn.Module):
                         idx_t = torch.tensor(idx_t, dtype=torch.long, device=vp_t.device)
                         idx_s = torch.tensor(idx_s, dtype=torch.long, device=vp_s.device)
                         
-                        # SAFEGUARD 1: Ensure we actually matched vision tokens
+                        # skip when no vision tokens matched
                         if len(idx_s) > 0:
                             vp_s_matched = vp_s[idx_s]
                             vp_t_matched = vp_t[idx_t]
@@ -171,7 +161,7 @@ class EMKDLoss(nn.Module):
                             
                             min_text_len_pos = min(student_pos_text_hidden_state.size(0), teacher_pos_text_hidden_state.size(0))
                             
-                            # SAFEGUARD 2: Ensure there are actually text tokens before computing VLAD
+                            # VLAD needs at least one text token
                             if min_text_len_pos > 0:
                                 student_pos_text_hidden_state = student_pos_text_hidden_state[-min_text_len_pos:, :]
                                 teacher_pos_text_hidden_state = teacher_pos_text_hidden_state[-min_text_len_pos:, :]

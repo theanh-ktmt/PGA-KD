@@ -1,10 +1,8 @@
 #!/bin/bash
 
-# =========================================================================
 # Hyperparameter Tuning Script for SSA (Training + Eval + WandB Sync)
-# =========================================================================
 
-# --- Configuration ---
+# Configuration
 NUM_GPUS_PER_NODE=8
 TRAIN_SCRIPT="main.py"
 EVAL_SCRIPT="eval_mmeb.py"
@@ -29,18 +27,14 @@ fi
 EVAL_SUBSETS_ARR=("ImageNet-1K" "N24News" "HatefulMemes" "VOC2007" "SUN397")
 EVAL_SUBSETS_STR="${EVAL_SUBSETS_ARR[*]}" # Join array to string
 
-# =========================================================================
 # Hyperparameter Grid
-# =========================================================================
 
 KD_WEIGHTS=(0.5 1.0 2.0)
 VAR_THRESHOLDS=(0.85 0.95)
 GAP_WEIGHTS=(0.5 1.0)
 MATRYOSHKA_OPTS=("64" "64 128")
 
-# =========================================================================
 # Tuning Loop
-# =========================================================================
 
 for kd_w in "${KD_WEIGHTS[@]}"; do
   for var_t in "${VAR_THRESHOLDS[@]}"; do

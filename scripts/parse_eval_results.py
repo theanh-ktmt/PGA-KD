@@ -70,7 +70,6 @@ def get_display_name(exp_name: str) -> str:
              return display_str
     return exp_name
 
-# ----------------------------------------
 
 def find_experiments(root_dir: Path) -> List[Tuple[str, Path]]:
     """

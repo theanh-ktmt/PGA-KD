@@ -17,9 +17,7 @@ else
     SUBSETS=("DocVQA")
     echo "Running with SINGLE dataset (DocVQA)."
 fi
-# =========================================================================
 # Run with torchrun
-# =========================================================================
 torchrun --nproc_per_node=$NUM_GPUS_PER_NODE $TRAIN_SCRIPT \
     --model_name "apple/FastVLM-0.5B" \
     --teacher_model_name "raghavlite/B3_Qwen2_2B" \

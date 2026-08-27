@@ -19,14 +19,12 @@ else
     echo "Running with SINGLE dataset (DocVQA)."
 fi
 
-# 2. [FIX] Define Evaluation Subsets
+# 2. Define Evaluation Subsets
 # These are the datasets you want to evaluate and see in the WandB table at the end.
 # You can make this the same as SUBSETS or a different list.
 EVAL_SUBSETS=("DocVQA" "InfographicsVQA") 
 
-# =========================================================================
 # Run with torchrun
-# =========================================================================
 torchrun --nproc_per_node=$NUM_GPUS_PER_NODE $TRAIN_SCRIPT \
     --model_name "apple/FastVLM-0.5B" \
     --teacher_model_name "raghavlite/B3_Qwen2_2B" \

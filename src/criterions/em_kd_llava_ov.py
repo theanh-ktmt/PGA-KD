@@ -69,7 +69,7 @@ class EMKDLLavaLoss(nn.Module):
         student_model: PreTrainedModel = distiller.student
         teacher_model: PreTrainedModel = distiller.teacher
 
-        # --- 1. Get Student and Teacher Representations ---
+        # Get Student and Teacher Representations
         with torch.no_grad():
             teacher_model.eval()
             t_qry_out = teacher_model.encode_input(input_data['teacher_inputs']['qry'])
@@ -83,7 +83,7 @@ class EMKDLLavaLoss(nn.Module):
         t_qry_reps, t_qry_img_feats, _, t_qry_hiddens = t_qry_out
         t_pos_reps, t_pos_img_feats, _, t_pos_hiddens = t_pos_out
         
-        # --- 2. Compute Contrastive and Global MSE Loss ---
+        # Compute Contrastive and Global MSE Loss
         all_s_qry_reps = self._dist_gather_tensor(s_qry_reps)
         all_s_pos_reps = self._dist_gather_tensor(s_pos_reps)
         scores = student_model.compute_similarity(all_s_qry_reps, all_s_pos_reps)
@@ -96,7 +96,7 @@ class EMKDLLavaLoss(nn.Module):
             nn.MSELoss()(s_pos_reps, distiller.projectors["t2s"](t_pos_reps))
         )
         
-        # --- 3. Compute VSD and VLAD Distillation Losses ---
+        # Compute VSD and VLAD Distillation Losses
         batch_size = s_qry_reps.size(0)
         total_vsd_loss, total_vlad_loss = 0.0, 0.0
 
@@ -119,7 +119,7 @@ class EMKDLLavaLoss(nn.Module):
             
         distill_loss = (self.vsd_loss_weight * total_vsd_loss + self.vlad_loss_weight * total_vlad_loss) / batch_size
         
-        # --- 4. Combine All Losses ---
+        # Combine All Losses
         loss = (self.contrastive_loss_weight * contrastive_loss + 
                 self.mse_loss_weight * mse_loss + 
                 self.kd_loss_weight * distill_loss)

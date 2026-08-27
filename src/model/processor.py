@@ -360,7 +360,6 @@ def Llava_ONEVISION_process_fn(model_inputs: dict, processor, max_length=None):
                 # Dùng LANCZOS để giữ chất lượng tốt nhất khi resize
                 resized_img = img.resize(TARGET_SIZE, Image.Resampling.LANCZOS)
                 optimized_images.append(resized_img)
-            # ---------------------------------------
 
             # Fix image token count in text
             num_image_token = text.count(image_token)

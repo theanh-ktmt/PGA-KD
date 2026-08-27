@@ -221,7 +221,7 @@ def load_model_for_benchmark(
         raise ValueError(f"No process_fn for backbone: {backbone}")
         
     params_m = sum(p.numel() for p in model.parameters()) / 1e6
-    print(f"✅ Loaded: {model_name} ({params_m:.1f}M params)")
+    print(f"Loaded {model_name} ({params_m:.1f}M params)")
     return model, processor, process_fn
 
 

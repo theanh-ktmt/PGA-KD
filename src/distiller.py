@@ -40,17 +40,12 @@ from src.utils import print_rank
 
 logger = logging.getLogger(__name__)
 
-# Global constants defining the instruction prompts for different tasks.
-# These prefixes are prepended to the positive text samples to guide the model's generation
-# or embedding representation during training (Instruction Tuning).
+# Instruction prefixes prepended to the positive text of each sample.
 
 POS_MOD_CLASS_LABEL = "Represent the class label: "
 POS_MOD_IMAGE_CAPTION = "Represent the image caption: "
 POS_MOD_ANSWER = "Represent the answer: "
 
-# Mapping from dataset names to their corresponding instruction prompts.
-# This ensures that each dataset (like ImageNet, OK-VQA, MSCOCO) gets the correct
-# task-specific instruction.
 POS_MOD_DICT = {
     "ImageNet_1K": POS_MOD_CLASS_LABEL,
     "HatefulMemes": POS_MOD_CLASS_LABEL,
@@ -105,7 +100,7 @@ def process_image(image: Image.Image, resolution: str, max_dim: int = 1344) -> O
     else:
         target_max = max_dim
 
-    # Resize if larger than target_max to avoid unnecessary downscaling if already small
+    # only downscale, never upscale
     if max_side > target_max:
         scale = target_max / max_side
         new_width = int(width * scale)
@@ -131,14 +126,12 @@ def create_semi_orthogonal_matrix(tensor: torch.Tensor) -> torch.Tensor:
     """
     rows, cols = tensor.shape
     if rows >= cols:
-        # Direct QR decomposition
-        # We generate a random Gaussian matrix and orthogonalize its columns.
+        # orthogonalize the columns of a random Gaussian matrix
         a = torch.randn(rows, cols, device=tensor.device, dtype=tensor.dtype)
         q, _ = torch.linalg.qr(a, mode='reduced')
         tensor.data[:] = q[:, :cols]
     else:
-        # QR on transposed matrix to ensure W W^T = I
-        # If output dim < input dim, we want rows to be orthogonal.
+        # fewer rows than columns: orthogonalize the rows instead, so W W^T = I
         a = torch.randn(cols, rows, device=tensor.device, dtype=tensor.dtype)
         q, _ = torch.linalg.qr(a, mode='reduced')
         tensor.data[:] = q.T[:rows, :]
@@ -233,13 +226,9 @@ class Distiller(nn.Module):
         return teacher
 
     def _init_specialized_projectors(self) -> None:
-        """
-        Conditionally initializes specialized projectors based on the loss type.
-        This avoids unnecessary memory allocation for unused projectors.
-        """
+        """Only builds the projectors the selected loss actually needs."""
         kd_loss_type = self.training_args.kd_loss_type
 
-        # For image alignment (used in various image-based distillation methods)
         if 'img_align' in kd_loss_type or 'image' in kd_loss_type:
             self.t2s_img_align = nn.Sequential(
                 nn.Linear(self.teacher_hidden_dim, self.student_hidden_dim),
@@ -247,7 +236,6 @@ class Distiller(nn.Module):
             ).to(dtype=torch.bfloat16)
             logger.info("Initialized t2s_img_align projector")
 
-        # For simple KD focusing on last layer
         if kd_loss_type in ['kd', 'simple_kd', 'logit_kd', 'universal_logit_distillation']:
             self.last_layer_projector = nn.Sequential(
                 nn.Linear(self.teacher_hidden_dim, self.student_hidden_dim),
@@ -255,7 +243,6 @@ class Distiller(nn.Module):
             ).to(dtype=torch.bfloat16)
             logger.info("Initialized last_layer_projector")
 
-        # For Soft-DTW (Dynamic Time Warping)
         if 'dtw' in kd_loss_type.lower():
             self.num_chosen_hidden_states = 3
             self.t2s_dtw = nn.ModuleList([
@@ -267,7 +254,6 @@ class Distiller(nn.Module):
             ]).to(dtype=torch.bfloat16)
             logger.info(f"Initialized t2s_dtw with {self.num_chosen_hidden_states} projectors")
 
-        # For CKD (Cross-layer Knowledge Distillation)
         if kd_loss_type in ['ckd', 'cross_layer_kd']:
             self.t2s_ckd = nn.Sequential(
                 nn.Linear(self.teacher_hidden_dim, self.student_hidden_dim),
@@ -280,12 +266,10 @@ class Distiller(nn.Module):
                 self.teacher_hidden_dim, 
                 bias=False
             )
-            # Use semi-orthogonal init to preserve the student's internal topology 
-            # as much as possible during the projection.
+            # semi-orthogonal init keeps the student's topology through the projection
             create_semi_orthogonal_matrix(self.holo_projector.weight)
             self.holo_projector = self.holo_projector.to(dtype=torch.bfloat16)
             logger.info("Initialized holo_projector (Student -> Teacher) for HoloDistill")
-        # -------------------------
 
     def get_student_processor(self) -> ProcessorMixin:
         """
@@ -358,29 +342,24 @@ class Distiller(nn.Module):
                 parts = cfg["structure"].split("-")
                 parsed = []
 
-                # Parse the structure string
                 for p in parts:
                     if p == "relu":
                         parsed.append("relu")
                     else:
-                        # Extract coefficient (e.g., "2s" -> 2 * student_dim)
+                        # "2s" -> 2 * student_dim
                         coef = int(p[:-1]) if len(p) > 1 and p[:-1].isdigit() else 1
                         parsed.append(coef * name_dict[p[-1]])
 
-                # Build the sequential module from parsed parts
                 for i in range(len(parsed) - 1):
                     a, b = parsed[i], parsed[i + 1]
                     if isinstance(a, int) and isinstance(b, int):
-                        # Linear Layer definition
                         layer = nn.Linear(a, b)
                         create_semi_orthogonal_matrix(layer.weight)
                         layer = layer.to(dtype=torch.bfloat16)  # FORCE bfloat16
                         seq.append(layer)
                     elif b == "relu":
-                        # Activation
                         seq.append(name_dict[b])
                     elif a == "relu" and isinstance(b, int):
-                        # Linear layer triggered after a ReLU
                         prev_out = parsed[i - 1] if isinstance(parsed[i - 1], int) else None
                         layer = nn.Linear(prev_out, b)
                         create_semi_orthogonal_matrix(layer.weight)
@@ -388,7 +367,7 @@ class Distiller(nn.Module):
                         seq.append(layer)
                 self.projectors[name] = seq
         else:
-            # Default: Simple Linear Projectors for each layer mapping
+            # no config: one linear projector per mapped layer
             for _ in range(len(self.training_args.teacher_layer_mapping)):
                 projector = nn.Linear(
                     self.student_hidden_dim,
@@ -401,17 +380,7 @@ class Distiller(nn.Module):
         logger.info(f"Created {len(self.projectors)} linear projectors.")
 
     def add_optimizer_param_group(self, optimizer: torch.optim.Optimizer) -> torch.optim.Optimizer:
-        """
-        Adds projector parameters to the optimizer.
-        This is necessary because projectors are initialized *after* the main model
-        and might need a different learning rate (projector_lr).
-
-        Args:
-            optimizer: The PyTorch optimizer object.
-
-        Returns:
-            The updated optimizer with the new parameter group.
-        """
+        """Registers the projectors, which are built after the model and use their own lr."""
         if hasattr(self, 'projectors') and self.projectors is not None:
             lr = getattr(self.training_args, "projector_lr", None) or self.training_args.learning_rate
             optimizer.add_param_group({

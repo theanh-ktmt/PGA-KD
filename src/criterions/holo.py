@@ -57,7 +57,7 @@ class HoloDistillLoss(nn.Module):
         student_model: PreTrainedModel = distiller.student
         teacher_model: PreTrainedModel = distiller.teacher
         
-        # --- 1. Get Teacher and Student Representations ---
+        # Get Teacher and Student Representations
         with torch.no_grad():
             teacher_model.eval()
             t_q_reps, _, _, t_q_states = teacher_model.encode_input(input_data['teacher_inputs']['qry'])
@@ -71,7 +71,7 @@ class HoloDistillLoss(nn.Module):
         contrastive_loss, holo_loss, rkd_loss = 0.0, 0.0, 0.0
         full_dim = s_q_reps.shape[-1]
         
-        # --- 2. Matryoshka Loop for Spectral Decoupling ---
+        # Matryoshka Loop for Spectral Decoupling
         for i, dim in enumerate(self.matryoshka_dims):
             dim_weight = self.matryoshka_weights[i] if i < len(self.matryoshka_weights) else 1.0
             spec_w = self.spectral_multipliers[i] if i < len(self.spectral_multipliers) else 1.0
@@ -83,12 +83,12 @@ class HoloDistillLoss(nn.Module):
             t_q_slice = F.normalize(t_q_reps[:, :current_dim], p=2, dim=-1)
             t_p_slice = F.normalize(t_p_reps[:, :current_dim], p=2, dim=-1)
 
-            # --- 2a. Contrastive Loss (Uniform Spectrum) ---
+            # a. Contrastive Loss (Uniform Spectrum)
             scores = torch.mm(s_q_slice, s_p_slice.t()) / self.temperature
             labels = torch.arange(scores.size(0), device=scores.device)
             contrastive_loss += dim_weight * nn.CrossEntropyLoss()(scores, labels)
 
-            # --- 2b. Global RKD (Applied to all slices) ---
+            # b. Global RKD (Applied to all slices)
             projector = getattr(distiller, 'holo_projector', None)
             s_batch_for_rkd = torch.cat([s_q_slice, s_p_slice], dim=0)
             if projector and current_dim == full_dim: # Use projected RKD only at full dimension
@@ -102,7 +102,7 @@ class HoloDistillLoss(nn.Module):
             rkd_val = self.rkd_distance_weight * rkd_dist + self.rkd_angle_weight * rkd_ang
             rkd_loss += (self.global_rkd_weight * spec_w) * rkd_val 
 
-            # --- 2c. Local Holo/FGW (Applied to high-dim slices) ---
+            # c. Local Holo/FGW (Applied to high-dim slices)
             if projector and (current_dim is None or current_dim > 128):
                 fgw_q = self._fused_gromov_wasserstein(s_q_states, t_q_states, projector)
                 fgw_p = self._fused_gromov_wasserstein(s_p_states, t_p_states, projector)

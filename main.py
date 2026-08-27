@@ -7,7 +7,7 @@ import time
 from datetime import timedelta
 from typing import Dict, List, Optional, Tuple
 
-# --- FIX 1: Disable Tokenizer Parallelism/OMP to prevent Deadlock ---
+# tokenizer/OMP threading deadlocks under DDP
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 os.environ["OMP_NUM_THREADS"] = "1"
 
@@ -36,7 +36,6 @@ from src.eval_mmeb_utils import run_mmeb_evaluation
 
 logger = logging.getLogger(__name__)
 
-# ... [Keep setup_logging, ddp_setup, cleanup_ddp, is_main_process, to_device, download_artifacts unchanged] ...
 def setup_logging(training_args: TrainingArguments) -> None:
     """Configures logging for the training process."""
     log_level = logging.INFO
@@ -92,7 +91,6 @@ def download_artifacts(model_args: ModelArguments):
             logger.warning(f"  [Pre-load] Warning: Some artifacts failed to pre-download: {e}")
     logger.info("  [Pre-load] Finished.")
 
-# --- CHANGED: Updated save_checkpoint to handle specific folder names (for best model) ---
 def save_checkpoint(
     output_dir: str,
     epoch: int,
@@ -160,7 +158,6 @@ def save_checkpoint(
     except Exception:
         pass
 
-# --- NEW FUNCTION: Evaluate Loss ---
 def evaluate_loss(
     model: nn.Module, 
     dataloader: DataLoader, 
@@ -225,7 +222,6 @@ def main():
     else:
         download_artifacts(model_args)
 
-    # --- CHANGED: Dataset Splitting Logic ---
     logger.info("Preparing dataset...")
     full_dataset = DistillationDataset(data_args, model_args)
     
@@ -391,7 +387,7 @@ def main():
                         wandb.log(metrics, step=global_step)
                     epoch_iterator.set_postfix(**{k.replace("train/", ""): f"{v:.4f}" for k, v in metrics.items() if "loss" in k})
 
-                # --- CHANGED: Periodic Evaluation & Best Model Saving ---
+                # periodic eval, keep the best checkpoint
                 if eval_dataloader is not None and training_args.eval_steps > 0 and global_step % training_args.eval_steps == 0:
                     logger.info(f"Step {global_step}: Running evaluation...")
                     val_loss = evaluate_loss(distiller, eval_dataloader, criterion, device)
@@ -427,8 +423,7 @@ def main():
     # Final Save
     save_checkpoint(training_args.output_dir, int(training_args.num_train_epochs), distiller, model_args, folder_name="checkpoint-final")
     if dist.is_initialized():
-        dist.barrier()  # <--- Crucial: Wait for Rank 0 to finish saving!
-    # =========================================================================
+        dist.barrier()  # wait for rank 0 to finish saving
     
     if is_main_process() and "wandb" in training_args.report_to:
         wandb.finish()

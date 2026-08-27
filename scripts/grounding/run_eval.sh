@@ -1,11 +1,9 @@
 #!/bin/bash
 
-# =========================================================================
-# Professional Evaluation Script
+# Evaluate a checkpoint on the MMEB subsets of this meta-task.
 # Usage: ./scripts/run_eval.sh [MODEL_PATH] [OUTPUT_DIR] [SUBSET_NAME]
 # Example: ./scripts/run_eval.sh training/RKD/checkpoint-final eval_outputs/RKD ImageNet_1K
-# =========================================================================
-# Experiment configurations
+# Experiment to score
 EXP_NAME="MSE_full_grounding_r16_a32_bs16"
 MODEL_PATH="training/$EXP_NAME/checkpoint-final"
 OUTPUT_DIR=eval_outputs/$EXP_NAME

@@ -97,8 +97,8 @@ def encode_and_save(model, loader, output_path, dataset_len, desc, device):
             batch = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
             
             with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-                # [FIX] Logic to determine if we are encoding Query or Target based on 'desc' string
-                # The EvalCollator returns generic keys, so we rely on the caller's description.
+                # EvalCollator returns generic keys, so the caller's description tells us
+                # whether this pass encodes queries or targets
                 
                 is_query = "qry" in desc.lower()
                 
@@ -143,10 +143,7 @@ def run_mmeb_evaluation(model, processor, model_args, data_args, training_args, 
         logger.warning("No eval_subset_name provided. Skipping MMEB evaluation.")
         return {}
 
-    # =========================================================================
-    # [FIX] SWAP DATA ARGS FOR EVALUATION
-    # We must ensure EvalDataset loads 'MMEB-eval' (test), not 'MMEB-train' (original)
-    # =========================================================================
+    # EvalDataset must read MMEB-eval/test, not the MMEB-train split used for training
     
     # 1. Backup original training args
     train_dataset_name = data_args.dataset_name
@@ -167,7 +164,6 @@ def run_mmeb_evaluation(model, processor, model_args, data_args, training_args, 
         data_args.image_dir = data_args.eval_image_dir
         
     logger.info(f"Context Switched for Eval -> Dataset: {data_args.dataset_name}, Split: {data_args.dataset_split}, Dir: {data_args.image_dir}")
-    # =========================================================================
 
     try:
         eval_collator = EvalCollator(

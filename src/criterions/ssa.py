@@ -81,7 +81,7 @@ class SSALoss(nn.Module):
         student_model: PreTrainedModel = distiller.student
         teacher_model: PreTrainedModel = distiller.teacher
 
-        # --- 1. Encode Inputs ---
+        # Encode Inputs
         with torch.no_grad():
             teacher_model.eval()
             t_qry, _, _, t_qry_output_hidden_states = teacher_model.encode_input(input_data['teacher_inputs']['qry'])
@@ -90,7 +90,7 @@ class SSALoss(nn.Module):
         s_qry, _, _, s_qry_output_hidden_states = student_model.encode_input(input_data['student_inputs']['qry'])
         s_pos, _, _, s_pos_output_hidden_states = student_model.encode_input(input_data['student_inputs']['pos'])
 
-        # --- 2. Compute Distributed Contrastive Loss (InfoNCE) ---
+        # Compute Distributed Contrastive Loss (InfoNCE)
         # Gather embeddings from all GPUs to maximize batch size for negative samples
         if self.world_size > 1:
             all_s_qry = self._dist_gather_tensor(s_qry)
@@ -108,7 +108,7 @@ class SSALoss(nn.Module):
         
         contrastive_loss = nn.CrossEntropyLoss()(scores / distiller.temperature, target)
 
-        # --- 3. Compute SSA Distillation Loss (Geometric Alignment) ---
+        # Compute SSA Distillation Loss (Geometric Alignment)
         # Note: SSA is computed on the LOCAL batch to reduce communication overhead.
         ssa_loss_full = self._compute_ssa_components(s_qry, s_pos, t_qry, t_pos)
 
@@ -126,7 +126,7 @@ class SSALoss(nn.Module):
         if self.matryoshka_dims:
             ssa_loss_total = (ssa_loss_total + ssa_loss_matryoshka) / (1 + len(self.matryoshka_dims))
 
-        # --- 4. Compute MSE Distillation Loss (Direct Feature Alignment) ---
+        # Compute MSE Distillation Loss (Direct Feature Alignment)
         # Project teacher embeddings to student dimension
         # We check if the specific projector exists in the distiller
         mse_loss_seq = torch.tensor(0.0, device=s_qry.device)
@@ -140,7 +140,7 @@ class SSALoss(nn.Module):
             
             mse_loss_seq = self.mse_loss_fn(s_qry, projected_t_qry)
 
-        # --- 5. Combine All Losses ---
+        # Combine All Losses
         # Total = Contrastive + (w_1 * SSA) + (w_2 * MSE)
         total_distillation = (self.ssa_weight * ssa_loss_total) + (self.mse_weight * mse_loss_seq)
         total_loss = contrastive_loss + total_distillation

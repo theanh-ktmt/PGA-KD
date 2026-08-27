@@ -203,7 +203,7 @@ class EMOLoss(nn.Module):
                 print(f"Warning: No top-k tokens found for OT loss computation for instance {i}")
                 continue
             
-            # === Get all text token indices for teacher ===
+            # Get all text token indices for teacher
             teacher_qry_input_ids = input_data['teacher_inputs']['qry']['input_ids'][i]
             teacher_pos_input_ids = input_data['teacher_inputs']['pos']['input_ids'][i]
             
@@ -221,7 +221,7 @@ class EMOLoss(nn.Module):
                 print(f"Warning: No text tokens found for instance {i}")
                 continue
             
-            # === Get all text token indices for student ===
+            # Get all text token indices for student
             student_qry_input_ids = input_data['student_inputs']['qry']['input_ids'][i]
             student_pos_input_ids = input_data['student_inputs']['pos']['input_ids'][i]
             
@@ -239,7 +239,7 @@ class EMOLoss(nn.Module):
                 print(f"Warning: No text tokens found for student instance {i}")
                 continue
             
-            # === Compute importance mass for Query ===
+            # Compute importance mass for Query
             teacher_qry_attn = teacher_qry_attention[-1][i]
             teacher_qry_importance_full = self.compute_token_importance(teacher_qry_attn, teacher_qry_input_ids.size(0))
             teacher_qry_importance = teacher_qry_importance_full[teacher_qry_text_indices]
@@ -264,7 +264,7 @@ class EMOLoss(nn.Module):
             teacher_qry_mass = teacher_qry_importance.view(-1, 1)
             student_qry_mass = student_qry_importance.view(-1, 1)
             
-            # === Compute importance mass for Positive ===
+            # Compute importance mass for Positive
             teacher_pos_attn = teacher_pos_attention[-1][i]
             teacher_pos_importance_full = self.compute_token_importance(teacher_pos_attn, teacher_pos_input_ids.size(0))
             teacher_pos_importance = teacher_pos_importance_full[teacher_pos_text_indices]
@@ -289,13 +289,13 @@ class EMOLoss(nn.Module):
             teacher_pos_mass = teacher_pos_importance.view(-1, 1)
             student_pos_mass = student_pos_importance.view(-1, 1)
             
-            # === Extract FULL text token hidden states ===
+            # Extract FULL text token hidden states
             student_qry_text_hidden = student_qry_hidden_states[-1][i][student_qry_text_indices, :]
             student_pos_text_hidden = student_pos_hidden_states[-1][i][student_pos_text_indices, :]
             projected_teacher_qry_text_hidden = distiller.projectors["t2s"](teacher_qry_hidden_states[-1][i][teacher_qry_text_indices, :])
             projected_teacher_pos_text_hidden = distiller.projectors["t2s"](teacher_pos_hidden_states[-1][i][teacher_pos_text_indices, :])
             
-            # === Compute cost matrices ===
+            # Compute cost matrices
             if self.ot_dist_type == 'cosine':
                 cost_matrix_qry = self.pairwise_cosine_distance(student_qry_text_hidden, projected_teacher_qry_text_hidden)
                 cost_matrix_pos = self.pairwise_cosine_distance(student_pos_text_hidden, projected_teacher_pos_text_hidden)
@@ -305,7 +305,7 @@ class EMOLoss(nn.Module):
             else:
                 raise ValueError(f"Unsupported OT distance type: {self.ot_dist_type}")
             
-            # === Compute OT loss ===
+            # Compute OT loss
             ot_loss_qry, _ = self.sinkhorn(cost_matrix_qry, student_qry_mass, teacher_qry_mass, num_iters=self.OT_max_iter)
             ot_loss_pos, _ = self.sinkhorn(cost_matrix_pos, student_pos_mass, teacher_pos_mass, num_iters=self.OT_max_iter)
             total_ot_loss = total_ot_loss + 0.5 * (ot_loss_qry + ot_loss_pos)
@@ -417,7 +417,7 @@ class EMOLoss(nn.Module):
                     s_pos_id_to_indices[token_id] = []
                 s_pos_id_to_indices[token_id].append(j)
 
-            # === Mapping chặt chẽ (Strict Pairing) cho QRY ===
+            # strict pairing for the query
             valid_t_qry_idx = []
             valid_s_qry_idx = []
             used_qry_indices = set()
@@ -430,7 +430,7 @@ class EMOLoss(nn.Module):
                             used_qry_indices.add(s_idx)
                             break 
 
-            # === Mapping chặt chẽ (Strict Pairing) cho POS ===
+            # strict pairing for the positive
             valid_t_pos_idx = []
             valid_s_pos_idx = []
             used_pos_indices = set()
@@ -463,5 +463,5 @@ class EMOLoss(nn.Module):
                 att_loss = cka_fn_loss(tq_mean, sq_mean) + cka_fn_loss(tp_mean, sp_mean)
                 att_loss_total += att_loss / 2
         
-        # Average over batch_size và k_layer
+        # average over batch_size and k_layer
         return att_loss_total / (batch_size * k_layer)
