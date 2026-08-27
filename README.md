@@ -39,11 +39,16 @@ where `L_PGA = 1 - CKA(G̃_S, G̃_T)` is computed against the truncated teacher 
 [`src/criterions/pga.py`](src/criterions/pga.py).
 
 <p align="center">
-  <img src="./asset/spectrum_eta_85.png" alt="Eigenvalue spectrum" width="410">
-  <img src="./asset/tsne_pro_layout.png" alt="t-SNE before and after filtering" width="410">
+  <img src="./asset/spectrum_eta_85.png" alt="Eigenvalue spectrum" width="560">
   <br>
-  <em>Left: with B = 64, the top 33 eigenvalues already cover η = 85% of the teacher's energy.
-  Right: dropping the tail raises the Silhouette score of the batch geometry from 0.074 to 0.114.</em>
+  <em>With B = 64, the top 33 eigenvalues already cover η = 85% of the teacher's energy; the rest is the
+  spectral tail PGA drops.</em>
+</p>
+
+<p align="center">
+  <img src="./asset/tsne_pro_layout.png" alt="t-SNE before and after filtering" width="760">
+  <br>
+  <em>Filtering that tail raises the Silhouette score of the batch geometry from 0.074 to 0.114.</em>
 </p>
 
 ## Results
